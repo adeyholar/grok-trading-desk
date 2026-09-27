@@ -91,6 +91,8 @@ memory:
 # Adeola Go is a product-side gate; Phase 1 code path is dry-run by default.
 # Prefer env ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET over alpaca.* below.
 options:
+  mode: "week"           # "week" (2–6w swing) | "intraday" (same-session; 0DTE locked)
+  unlock_0dte: false      # Adeola unlock required for 0DTE band
   max_level: 2              # Level 2 only: buy call / buy put (no sell-to-open, no mleg)
   dte_min: 14               # ~2 weeks
   dte_max: 42               # ~6 weeks
@@ -105,3 +107,29 @@ logging:
   path: "logs/desk.jsonl"
   echo_stdout: true
   cost_report_every: 25   # log a spend snapshot every N model calls
+
+
+# Phase 1 — Stock Intraday (worker discretion + sound discipline).
+# Adeola locks: Go window / No-Go / risk-caps / overnight. No rigid time-exits.
+# Prefer ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET.
+stock_intraday:
+  dry_run: true
+  base_url: "https://paper-api.alpaca.markets"
+  max_risk_usd: 100.0
+  max_notional_usd: 500.0
+  max_open: 2
+  loss_streak_no_go: 2
+  require_universe: true
+  # symbols: ["AAPL", "SPY"]
+  # evidence_cites:
+  #   - {kind: living_log_lesson, ref: "lesson-id"}
+  #   - {kind: reviewed_journal, ref: "journal-date"}
+
+# Phase 3 — Crypto Intraday (Alpaca paper BTC/USD ETH/USD only; NOT pump.fun).
+crypto_intraday:
+  dry_run: true
+  base_url: "https://paper-api.alpaca.markets"
+  max_risk_usd: 50.0
+  max_open: 2
+  loss_streak_no_go: 2
+  symbols: ["BTC/USD", "ETH/USD"]

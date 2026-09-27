@@ -235,6 +235,32 @@ python -m src.options --config config.yaml --submit-paper
 Package layout: `src/options/contracts.py`, `overlay.py`, `options_executor.py`,
 `options_loop.py`. Hard validators reject mleg / sell-to-open / level > 2.
 
+## Phase 1 — Stock Intraday + Phase 3 — Crypto Intraday
+
+Same-session **intraday** books (not multi-day "Day" holds). **Worker discretion**
+(Scanner / Context / Checker / Trade Desk) informed by evidence cites — Living Log
+Lesson, reviewed journal, market facts — **not gut-only**. Adeola locks only:
+Go window / No-Go / risk-caps / overnight hold. Flexible to market fluidity; **no
+rigid time-exit automation**. Hard discipline: defined risk every ticket,
+High→Checker→Go, max 1–2 opens/book, force No-Go after 2 losses, paper host only,
+dry-run default, never invent fills. Living Log after review.
+
+```bash
+# Stock Intraday dry-run (mega-cap + ETF universe, marketable limit, defined risk)
+python -m src.stocks.intraday --config config.yaml --symbols AAPL,SPY --price 200
+
+# Crypto Intraday dry-run (Alpaca paper BTC/USD ETH/USD only — no pump.fun)
+python -m src.crypto_intraday --config config.yaml --btc-price 60000 --eth-price 3000
+
+# Paper POST only with Adeola Go (still refuses live host)
+python -m src.stocks.intraday --config config.yaml --symbols SPY --price 500 --submit-paper --adeola-go
+```
+
+Options: **Mode Week** = existing 2–6w swing overlay; **Mode Intraday** = same-session
+exit preference (0DTE locked unless Adeola unlocks). See `src/options/modes.py`.
+
+Env (all lanes): `ALPACA_PAPER_API_KEY` / `ALPACA_PAPER_API_SECRET`.
+
 ## Disclaimer
 
 Experimental software. Nothing here is financial advice. It ships paper-first
