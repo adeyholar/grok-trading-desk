@@ -9,6 +9,8 @@ Three concurrent asyncio loops, one shared risk manager, one event log:
 This fork targets Options Paper Desk next (Alpaca paper equities).
 
 Run:  python -m src.desk --config config.yaml [--dry-run] [--i-understand-the-risk]
+      python -m src.options --config config.yaml          # Phase 1 options dry-run
+      python -m src.desk --config config.yaml --options-pass [--submit-paper]
 """
 
 from __future__ import annotations
@@ -413,6 +415,16 @@ def main() -> None:
         help='required, together with mode: "live" in the config, to leave paper trading',
     )
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--options-pass",
+        action="store_true",
+        help="run one Phase 1 options pass (screener → overlay → dry-run) then exit",
+    )
+    parser.add_argument(
+        "--submit-paper",
+        action="store_true",
+        help="with --options-pass: POST to Alpaca paper (still refuses live). Default is dry-run.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -420,7 +432,32 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    desk = TradingDesk(load_config(args.config), dry_run=args.dry_run, live_ack=args.live_ack)
+    config = load_config(args.config)
+    if args.options_pass:
+        from .options.options_loop import run_options_pass
+
+        dry = not args.submit_paper
+        try:
+            results = asyncio.run(
+                run_options_pass(
+                    config,
+                    dry_run=dry,
+                    submit_paper=args.submit_paper,
+                )
+            )
+        except KeyboardInterrupt:
+            log.info("options pass stopped")
+            return
+        bought = sum(1 for r in results if r.get("bought"))
+        log.info(
+            "options pass finished: %d results, %d bought/logged (dry_run=%s)",
+            len(results),
+            bought,
+            dry,
+        )
+        return
+
+    desk = TradingDesk(config, dry_run=args.dry_run, live_ack=args.live_ack)
     try:
         asyncio.run(desk.run())
     except KeyboardInterrupt:

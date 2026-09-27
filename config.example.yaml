@@ -23,6 +23,7 @@ grok:
   max_retries: 3
 
 alpaca:
+  # Prefer ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET when set.
   api_key: "REPLACE_ME"
   api_secret: "REPLACE_ME"
   paper: true
@@ -85,6 +86,20 @@ memory:
   enabled: true
   max_examples: 5
   lookback_days: 30
+
+# Phase 1 — Options Paper Desk (Level 2 long call / long put only).
+# Adeola Go is a product-side gate; Phase 1 code path is dry-run by default.
+# Prefer env ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET over alpaca.* below.
+options:
+  max_level: 2              # Level 2 only: buy call / buy put (no sell-to-open, no mleg)
+  dte_min: 14               # ~2 weeks
+  dte_max: 42               # ~6 weeks
+  max_risk_usd: 250.0       # premium * 100 * qty ceiling per order
+  max_per_underlying: 2     # up to one call + one put
+  min_open_interest: 10
+  min_overlay_score: 0.0
+  dry_run: true             # log only; --submit-paper required for paper POST
+  base_url: "https://paper-api.alpaca.markets"  # locked; non-paper refused
 
 logging:
   path: "logs/desk.jsonl"
