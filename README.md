@@ -151,6 +151,7 @@ python -m src.desk --config config.yaml --i-understand-the-risk
 | `mode` | `paper` or `live` (live also needs the CLI flag) |
 | `grok` | API key, models, live search, timeout, retries |
 | `alpaca` | Key, secret, paper flag |
+| `options` | Phase 1 Level-2 dry-run (DTE, max_risk, paper base URL) |
 | `risk` | Budget, daily loss limit, open caps, sector cap, sizing |
 | `stock_filter` | Screener thresholds |
 | `scoring_weights` | Equity matrix + `min_score_to_buy` |
@@ -195,6 +196,44 @@ Broker refusals get distinct skip reasons: `pdt_blocked`, `wash_trade_blocked`,
 `insufficient_buying_power`, `asset_not_tradable`, `broker_rate_limited`.
 
 ---
+
+
+---
+
+## Phase 1 — Options paper dry-run (Level 2)
+
+Alpaca **paper only** (`https://paper-api.alpaca.markets`). Level 2 means **buy call /
+buy put** — no sell-to-open, no multi-leg. The product-side **Adeola Go** gate is
+documented but not enforced in code yet; Phase 1 defaults to dry-run (log only).
+
+### Env / credentials
+
+Prefer these over `alpaca.api_key` / `alpaca.api_secret` in yaml (values never printed):
+
+- `ALPACA_PAPER_API_KEY`
+- `ALPACA_PAPER_API_SECRET`
+
+Config block (`options:` in `config.example.yaml`): `max_level: 2`, `dte_min` /
+`dte_max` (default 14–42 ≈ 2–6 weeks), `max_risk_usd`, `dry_run: true`,
+`base_url` locked to the paper host.
+
+### Run dry-run
+
+```bash
+# screener survivors → overlay → checker stub → dry-run order log
+python -m src.options --config config.yaml
+# or
+python -m src.desk --config config.yaml --options-pass
+
+# optional symbols without screener
+python -m src.options --config config.yaml --symbols AAPL,MSFT
+
+# paper POST only if you really mean it (still refuses live host)
+python -m src.options --config config.yaml --submit-paper
+```
+
+Package layout: `src/options/contracts.py`, `overlay.py`, `options_executor.py`,
+`options_loop.py`. Hard validators reject mleg / sell-to-open / level > 2.
 
 ## Disclaimer
 
