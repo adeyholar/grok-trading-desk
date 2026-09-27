@@ -5,11 +5,10 @@ import pytest
 
 from tests.conftest import CONFIG, FakeResponse
 from src.base_agent import CostTracker, GrokAgent, parse_json_response, schema
-from src.crypto.auditor import Auditor
-from src.crypto.crypto_checker import CryptoChecker
 from src.shared.allocator import Allocator
 from src.stocks.insider import Insider
 from src.stocks.radar import Radar
+from src.stocks.stock_checker import StockChecker
 
 
 class Probe(GrokAgent):
@@ -73,7 +72,7 @@ def test_legacy_model_keys_still_resolve():
 def test_model_defaults_split_the_tiers():
     bare = Probe({})
     assert bare.model == "grok-4.3"
-    assert CryptoChecker({}).model == "grok-4.6"
+    assert StockChecker({}).model == "grok-4.6"
 
 
 # --- live search -------------------------------------------------------------------
@@ -103,7 +102,7 @@ def test_live_search_can_be_switched_off_globally():
 
 
 def test_x_source_carries_an_engagement_floor():
-    search = Auditor(CONFIG).build_request({"mint": "M"})["search_parameters"]
+    search = Radar(CONFIG).build_request({"symbol": "ACME"})["search_parameters"]
     x = next(s for s in search["sources"] if s["type"] == "x")
     assert x["post_view_count"] > 0
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay the event log: what the desk did, and what it made.
 
-    python scripts/replay.py [--log logs/desk.jsonl] [--days 7] [--market crypto]
+    python scripts/replay.py [--log logs/desk.jsonl] [--days 7] [--market stocks]
 """
 
 from __future__ import annotations
@@ -151,8 +151,7 @@ def render(summary: dict) -> str:
     if summary["allocations"]:
         latest = summary["allocations"][-1]
         lines.append(
-            f"  Latest allocation: crypto {float(latest.get('crypto_pct', 0)):.0%} / "
-            f"stocks {float(latest.get('stocks_pct', 0)):.0%}"
+            f"  Latest allocation: stocks {float(latest.get('stocks_pct', 1)):.0%}"
         )
         if latest.get("reason"):
             lines.append(f"    reason: {latest['reason']}")
@@ -166,7 +165,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Replay the desk event log")
     parser.add_argument("--log", default="logs/desk.jsonl")
     parser.add_argument("--days", type=int, default=None, help="only the last N days")
-    parser.add_argument("--market", choices=["crypto", "stocks"], default=None)
+    parser.add_argument("--market", choices=["stocks"], default=None)
     args = parser.parse_args()
 
     records = read_log(args.log)

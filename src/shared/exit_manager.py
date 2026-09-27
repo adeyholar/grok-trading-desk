@@ -1,6 +1,6 @@
 """Bot 13 — exit manager (grok-4-fast).
 
-Runs every 4 hours over every open position on both markets. Four verbs only:
+Runs every 4 hours over every open equity position. Four verbs only:
 HOLD, TIGHTEN, TRIM, CLOSE. On any failure it returns HOLD — an unreadable model
 must never be the reason a position gets touched.
 """

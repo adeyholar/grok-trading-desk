@@ -73,9 +73,9 @@ async def test_prompt_carries_the_position_state(client_factory):
     assert "ACME" in sent and "pnl_pct" in sent and "hold_time_hours" in sent
 
 
-async def test_works_on_a_crypto_position_too(client_factory):
-    crypto = Position(market=Market.CRYPTO, symbol="WIF2", quantity=1e6, entry_price=0.0001, current_price=0.00025)
-    result = await ExitManager(CONFIG, client=client_factory({"action": "TRIM", "trim_fraction": 0.5})).run(crypto)
+async def test_works_on_another_stock_position(client_factory):
+    other = Position(market=Market.STOCKS, symbol="BETA", quantity=20, entry_price=10.0, current_price=12.0)
+    result = await ExitManager(CONFIG, client=client_factory({"action": "TRIM", "trim_fraction": 0.5})).run(other)
     assert result["action"] == "TRIM"
 
 
@@ -83,5 +83,5 @@ def test_position_pnl_math():
     assert POSITION.pnl_usd == pytest.approx(70.0)
     assert POSITION.pnl_pct == pytest.approx(0.14)
     assert POSITION.hold_time_hours == pytest.approx(6.0, abs=0.01)
-    flat = Position(market=Market.CRYPTO, symbol="X", quantity=1, entry_price=0.0)
+    flat = Position(market=Market.STOCKS, symbol="X", quantity=1, entry_price=0.0)
     assert flat.pnl_usd == 0.0 and flat.pnl_pct == 0.0

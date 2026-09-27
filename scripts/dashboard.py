@@ -47,8 +47,7 @@ def render(records: list[dict], budget: float | None = None) -> str:
 
     pnl = sum(float(r.get("pnl", 0) or 0) for r in closes)
     deployed = sum(float(r.get("amount", 0) or 0) for r in buys)
-    crypto_buys = sum(1 for r in buys if r.get("market") == "crypto")
-    stock_buys = len(buys) - crypto_buys
+    stock_buys = sum(1 for r in buys if r.get("market") == "stocks")
 
     lines = [
         "",
@@ -60,7 +59,7 @@ def render(records: list[dict], budget: float | None = None) -> str:
     def row(text: str) -> None:
         lines.append("║  " + text.ljust(WIDTH - 2) + "║")
 
-    row(f"buys        {len(buys):>4}   (crypto {crypto_buys}, stocks {stock_buys})")
+    row(f"buys        {len(buys):>4}   (stocks {stock_buys})")
     row(f"closes      {len(closes):>4}")
     row(f"deployed    ${deployed:>10,.2f}")
     row(f"realised    ${pnl:>10,.2f}")
@@ -75,9 +74,8 @@ def render(records: list[dict], budget: float | None = None) -> str:
 
     if allocations:
         latest = allocations[-1]
-        crypto_pct = float(latest.get("crypto_pct", 0.5))
-        row(f"allocation  crypto {bar(crypto_pct, 16)} {crypto_pct:>4.0%}")
-        row(f"            stocks {bar(1 - crypto_pct, 16)} {1 - crypto_pct:>4.0%}")
+        stocks_pct = float(latest.get("stocks_pct", 1.0))
+        row(f"allocation  stocks {bar(stocks_pct, 16)} {stocks_pct:>4.0%}")
         row("")
 
     if actions:

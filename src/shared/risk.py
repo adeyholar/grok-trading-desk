@@ -1,8 +1,8 @@
-"""Portfolio risk manager. One instance governs both markets.
+"""Portfolio risk manager for the equity desk.
 
-Every limit here is cross-market by design: a memecoin loss eats the same daily
-budget an equity loss does, and the open-position cap counts both books. Nothing
-in this file asks a model for permission.
+Every limit here is fail-closed: a model never gets to raise a cap. Daily loss,
+open-position count, sector concentration and position size are all enforced in
+code before any order is submitted.
 """
 
 from __future__ import annotations
@@ -18,26 +18,24 @@ log = logging.getLogger(__name__)
 
 
 class RiskManager:
-    """Budget, exposure and position sizing across crypto and stocks."""
+    """Budget, exposure and position sizing for equities."""
 
     def __init__(self, config: dict[str, Any]):
         risk = (config or {}).get("risk", {}) or {}
         self.total_budget_usd = float(risk.get("total_budget_usd", 1000.0))
         self.daily_loss_limit_usd = float(risk.get("daily_loss_limit_usd", 200.0))
         self.max_open_total = int(risk.get("max_open_total", 10))
-        self.max_open_crypto = int(risk.get("max_open_crypto", 6))
         self.max_open_stocks = int(risk.get("max_open_stocks", 6))
         self.max_per_sector = int(risk.get("max_per_sector", 2))
-        self.crypto_max_pct = float(risk.get("crypto_max_pct", 1.0))
         self.stock_max_pct = float(risk.get("stock_max_pct", 1.0))
         self.max_position_pct_of_market = float(risk.get("max_position_pct_of_market", 0.15))
         self.max_position_pct_of_remaining_loss = float(
             risk.get("max_position_pct_of_remaining_loss", 0.25)
         )
 
-        self.allocation = Allocation()
+        self.allocation = Allocation(stocks_pct=1.0, reason="stocks-only desk")
         self.realized_pnl_today = 0.0
-        self.deployed_usd: dict[Market, float] = {Market.CRYPTO: 0.0, Market.STOCKS: 0.0}
+        self.deployed_usd: dict[Market, float] = {Market.STOCKS: 0.0}
         self.session_date = date.today()
 
     # -- daily bookkeeping --------------------------------------------------------
@@ -49,7 +47,7 @@ class RiskManager:
             return False
         self.session_date = today
         self.realized_pnl_today = 0.0
-        self.deployed_usd = {Market.CRYPTO: 0.0, Market.STOCKS: 0.0}
+        self.deployed_usd = {Market.STOCKS: 0.0}
         log.info("risk: new session %s, daily counters reset", today)
         return True
 
@@ -62,19 +60,14 @@ class RiskManager:
             self.deployed_usd[market] = max(0.0, self.deployed_usd.get(market, 0.0) - amount_usd)
 
     def set_allocation(self, allocation: Allocation) -> Allocation:
-        """Store the allocator's split, clamped to the configured ceilings."""
-        self.allocation = allocation.normalized(self.crypto_max_pct, self.stock_max_pct)
+        """Store the allocator's split. Equity-only: always 100% stocks."""
+        self.allocation = allocation.normalized(self.stock_max_pct)
         return self.allocation
 
     # -- derived state ------------------------------------------------------------
 
-    def market_budget(self, market: Market) -> float:
-        pct = (
-            self.allocation.crypto_pct
-            if market == Market.CRYPTO
-            else self.allocation.stocks_pct
-        )
-        return self.total_budget_usd * pct
+    def market_budget(self, market: Market = Market.STOCKS) -> float:
+        return self.total_budget_usd * self.allocation.stocks_pct
 
     def remaining_loss_room(self) -> float:
         """How much more we may lose today before the desk shuts."""
@@ -83,7 +76,7 @@ class RiskManager:
     def daily_loss_breached(self) -> bool:
         return self.realized_pnl_today <= -self.daily_loss_limit_usd
 
-    def remaining_market_budget(self, market: Market) -> float:
+    def remaining_market_budget(self, market: Market = Market.STOCKS) -> float:
         return max(0.0, self.market_budget(market) - self.deployed_usd.get(market, 0.0))
 
     # -- the gate -----------------------------------------------------------------
@@ -103,8 +96,6 @@ class RiskManager:
             return False, "max_open_total"
 
         same_market = [p for p in positions if p.market == market]
-        if market == Market.CRYPTO and len(same_market) >= self.max_open_crypto:
-            return False, "max_open_crypto"
         if market == Market.STOCKS and len(same_market) >= self.max_open_stocks:
             return False, "max_open_stocks"
 
@@ -121,10 +112,10 @@ class RiskManager:
 
         return True, "ok"
 
-    def position_size(self, market: Market, score: float = 1.0) -> float:
+    def position_size(self, market: Market = Market.STOCKS, score: float = 1.0) -> float:
         """USD for one new trade, floored at 0.
 
-        Bounded three ways: a share of that market's budget, a share of what is
+        Bounded three ways: a share of the equity budget, a share of what is
         left of today's loss allowance, and whatever budget is actually free.
         The score scales linearly between half size and full size.
         """
@@ -145,17 +136,14 @@ class RiskManager:
             "remaining_loss_room": round(self.remaining_loss_room(), 2),
             "daily_loss_breached": self.daily_loss_breached(),
             "allocation": {
-                "crypto_pct": round(self.allocation.crypto_pct, 4),
                 "stocks_pct": round(self.allocation.stocks_pct, 4),
             },
             "budgets": {
-                "crypto": round(self.market_budget(Market.CRYPTO), 2),
                 "stocks": round(self.market_budget(Market.STOCKS), 2),
             },
             "deployed": {k.value: round(v, 2) for k, v in self.deployed_usd.items()},
             "open_positions": {
                 "total": len(positions),
-                "crypto": sum(1 for p in positions if p.market == Market.CRYPTO),
                 "stocks": sum(1 for p in positions if p.market == Market.STOCKS),
             },
         }
