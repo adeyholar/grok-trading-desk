@@ -1,11 +1,12 @@
-"""Grok Trading Desk — the orchestrator.
+"""Grok Trading Desk — equity orchestrator (Options Paper Desk fork).
 
-Four concurrent asyncio loops, one shared risk manager, one event log:
+Three concurrent asyncio loops, one shared risk manager, one event log:
 
-  crypto_loop     continuous, 24/7, driven by the pump.fun WebSocket
   stock_loop      wakes every minute, works only inside the RTH window
-  exit_loop       every 4 hours over every open position on both books
-  allocator_loop  once a day, resets the crypto/stocks budget split
+  exit_loop       every 4 hours over every open equity position
+  allocator_loop  once a day, confirms the stocks-only budget (100% equities)
+
+This fork targets Options Paper Desk next (Alpaca paper equities).
 
 Run:  python -m src.desk --config config.yaml [--dry-run] [--i-understand-the-risk]
 """
@@ -22,13 +23,6 @@ from typing import Any
 import yaml
 
 from .base_agent import CostTracker
-from .crypto.auditor import Auditor
-from .crypto.crypto_checker import CryptoChecker
-from .crypto.crypto_executor import CryptoExecutor
-from .crypto.crypto_pulse import CryptoPulse
-from .crypto.crypto_scoring import score_token
-from .crypto.narrative import Narrative
-from .crypto.scout import Scout
 from .models import Allocation, Market, Position
 from .shared.allocator import Allocator
 from .shared.exit_manager import ExitManager
@@ -61,7 +55,7 @@ def _parse_hhmm(value: str, default: dtime) -> dtime:
 
 
 class TradingDesk:
-    """Owns every bot, the shared risk state and the four loops."""
+    """Owns every bot, the shared risk state and the three loops."""
 
     def __init__(self, config: dict[str, Any], dry_run: bool = False, live_ack: bool = False):
         self.config = config
@@ -76,15 +70,7 @@ class TradingDesk:
         def agent(cls):
             return cls(config, costs=self.costs)
 
-        # crypto side
-        self.scout = Scout(config)
-        self.auditor = agent(Auditor)
-        self.narrative = agent(Narrative)
-        self.crypto_pulse = agent(CryptoPulse)
-        self.crypto_checker = agent(CryptoChecker)
-        self.crypto_executor = CryptoExecutor(config)
-
-        # stock side
+        # equity side
         self.screener = Screener(config)
         self.analyst = agent(Analyst)
         self.radar = agent(Radar)
@@ -99,7 +85,7 @@ class TradingDesk:
 
         # Only the agents that decide get history; the analysts describe what is
         # in front of them and should not be anchored by old trades.
-        for bot in (self.crypto_checker, self.stock_checker, self.exit_manager, self.allocator):
+        for bot in (self.stock_checker, self.exit_manager, self.allocator):
             bot.memory = self.memory
 
         self.positions: list[Position] = []
@@ -150,103 +136,6 @@ class TradingDesk:
         open_at = _parse_hhmm(hours.get("open", "09:35"), dtime(9, 35))
         close_at = _parse_hhmm(hours.get("close", "15:55"), dtime(15, 55))
         return open_at <= now.time() <= close_at
-
-    # -- crypto loop ----------------------------------------------------------------
-
-    async def evaluate_token(self, token) -> dict[str, Any]:
-        """Audit + narrative + pulse -> score -> adversarial check -> buy or skip."""
-        pulse, audit, narrative = await asyncio.gather(
-            self.crypto_pulse.run(),
-            self.auditor.run(token),
-            self.narrative.run(token),
-        )
-
-        verdict = score_token(
-            token,
-            audit,
-            narrative,
-            pulse,
-            weights=self.weights.get("crypto"),
-            min_go_signal=self.min_go_signal,
-        )
-        agent_scores = {
-            "audit": audit, "narrative": narrative, "pulse": pulse, "matrix": verdict,
-            "citations": self.auditor.last_citations + self.narrative.last_citations,
-        }
-        self.maybe_report_costs()
-
-        if not verdict["buy"]:
-            self.log.skip(Market.CRYPTO.value, token.symbol or token.mint, verdict["reason"],
-                          {"score": verdict["score"]})
-            return {"bought": False, "reason": verdict["reason"]}
-
-        check = await self.crypto_checker.run(
-            {"token": token.model_dump(mode="json"), "audit": audit,
-             "narrative": narrative, "pulse": pulse, "score": verdict}
-        )
-        agent_scores["checker"] = check
-        agent_scores["citations"] += self.crypto_checker.last_citations
-        self.maybe_report_costs()
-        if not check["approve"]:
-            self.log.skip(Market.CRYPTO.value, token.symbol or token.mint, "checker_rejected",
-                          {"kill_reasons": check["kill_reasons"]})
-            return {"bought": False, "reason": "checker_rejected"}
-
-        return await self._open_crypto(token, verdict, check, agent_scores)
-
-    async def _open_crypto(self, token, verdict, check, agent_scores) -> dict[str, Any]:
-        async with self._lock:
-            allowed, reason = self.risk.can_open(Market.CRYPTO, self.positions)
-            if not allowed:
-                self.log.skip(Market.CRYPTO.value, token.symbol or token.mint, reason)
-                return {"bought": False, "reason": reason}
-
-            amount = self.risk.position_size(Market.CRYPTO, score=check["adjusted_score"] or verdict["score"])
-            if amount <= 0:
-                self.log.skip(Market.CRYPTO.value, token.symbol or token.mint, "size_zero")
-                return {"bought": False, "reason": "size_zero"}
-
-            if self.dry_run:
-                self.log.buy(Market.CRYPTO.value, token.symbol or token.mint, verdict["score"],
-                             agent_scores, amount, tx_id="DRY_RUN")
-                return {"bought": True, "dry_run": True, "amount": amount}
-
-            try:
-                fill = await self.crypto_executor.buy(token.mint, amount)
-            except NotImplementedError as exc:
-                # the stub is expected until the owner wires signing
-                self.log.skip(Market.CRYPTO.value, token.symbol or token.mint,
-                              "executor_not_implemented", str(exc))
-                return {"bought": False, "reason": "executor_not_implemented"}
-
-            self.risk.record_fill(Market.CRYPTO, amount)
-            self.positions.append(
-                Position(
-                    market=Market.CRYPTO,
-                    symbol=token.symbol or token.mint,
-                    quantity=float(fill.get("quantity", 0)),
-                    entry_price=float(fill.get("price", 0)),
-                    amount_usd=amount,
-                    score=verdict["score"],
-                    meta={"mint": token.mint, "tx_id": fill.get("tx_id", "")},
-                )
-            )
-            self.log.buy(Market.CRYPTO.value, token.symbol or token.mint, verdict["score"],
-                         agent_scores, amount, tx_id=str(fill.get("tx_id", "")))
-            return {"bought": True, "amount": amount, "tx_id": fill.get("tx_id", "")}
-
-    async def crypto_loop(self) -> None:
-        log.info("crypto loop: streaming pump.fun")
-        while True:
-            try:
-                async for token in self.scout.stream():
-                    self.risk.maybe_reset_day()
-                    await self.evaluate_token(token)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - a loop must not die on one bad token
-                log.exception("crypto loop error, restarting in 10s")
-                await asyncio.sleep(10)
 
     # -- stock loop -----------------------------------------------------------------
 
@@ -375,8 +264,7 @@ class TradingDesk:
     # -- exit loop --------------------------------------------------------------------
 
     async def refresh_positions(self) -> list[Position]:
-        """Merge broker truth into our view. Crypto stays desk-side while the
-        executor is a stub."""
+        """Merge broker truth into our view."""
         try:
             live_stocks = await self.stock_executor.get_positions()
         except Exception as exc:  # noqa: BLE001 - a broker hiccup must not clear the book
@@ -384,7 +272,7 @@ class TradingDesk:
             return self.positions
 
         by_symbol = {p.symbol: p for p in self.positions if p.market == Market.STOCKS}
-        merged: list[Position] = [p for p in self.positions if p.market == Market.CRYPTO]
+        merged: list[Position] = []
         for live in live_stocks:
             known = by_symbol.get(live.symbol)
             if known is not None:
@@ -405,42 +293,25 @@ class TradingDesk:
         if action == "HOLD" or self.dry_run:
             return decision
 
-        executor = (
-            self.crypto_executor if position.market == Market.CRYPTO else self.stock_executor
-        )
         try:
             if action == "TIGHTEN":
                 new_stop = position.current_price * (1 - decision["new_stop_pct"])
-                if position.market == Market.STOCKS:
-                    await executor.tighten_stop(position.meta.get("order_id", ""), new_stop)
-                else:
-                    await executor.tighten_stop(position.meta.get("mint", ""), new_stop)
+                await self.stock_executor.tighten_stop(position.meta.get("order_id", ""), new_stop)
                 position.stop_price = new_stop
 
             elif action == "TRIM":
                 fraction = decision["trim_fraction"]
-                if position.market == Market.STOCKS:
-                    await executor.sell_partial(position.symbol, position.quantity * fraction)
-                else:
-                    await executor.sell(position.meta.get("mint", ""), fraction)
+                await self.stock_executor.sell_partial(position.symbol, position.quantity * fraction)
                 position.quantity *= 1 - fraction
                 position.amount_usd *= 1 - fraction
 
             elif action == "CLOSE":
-                target = (
-                    position.symbol
-                    if position.market == Market.STOCKS
-                    else position.meta.get("mint", "")
-                )
-                await executor.close_position(target)
+                await self.stock_executor.close_position(position.symbol)
                 self.risk.record_close(position.market, position.pnl_usd, position.amount_usd)
                 self.log.close(position.market.value, position.symbol,
                                round(position.pnl_usd, 2), round(position.hold_time_hours, 2))
                 self.positions = [p for p in self.positions if p is not position]
 
-        except NotImplementedError as exc:
-            self.log.skip(position.market.value, position.symbol,
-                          "executor_not_implemented", str(exc))
         except OrderRejected as rejection:
             self.log.skip(position.market.value, position.symbol,
                           rejection.reason, rejection.detail)
@@ -471,9 +342,9 @@ class TradingDesk:
     # -- allocator loop -----------------------------------------------------------------
 
     def weekly_pnl(self) -> dict[str, float]:
-        """Realised PnL per market over the trailing seven days, from the log."""
+        """Realised equity PnL over the trailing seven days, from the log."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        totals = {"crypto": 0.0, "stocks": 0.0}
+        totals = {"stocks": 0.0}
         for record in self.log.read():
             if record.get("type") != "close":
                 continue
@@ -492,20 +363,17 @@ class TradingDesk:
 
     async def run_allocation(self) -> Allocation:
         self.refresh_memory()
-        crypto_pulse, market_pulse = await asyncio.gather(
-            self.crypto_pulse.run(), self.market_pulse.run()
-        )
+        market_pulse = await self.market_pulse.run()
         allocation = await self.allocator.allocate(
-            crypto_pulse, market_pulse, self.weekly_pnl(), risk=self.config.get("risk")
+            market_pulse, self.weekly_pnl(), risk=self.config.get("risk")
         )
         applied = self.risk.set_allocation(allocation)
-        self.log.allocation(round(applied.crypto_pct, 4), round(applied.stocks_pct, 4),
-                            allocation.reason)
+        self.log.allocation(round(applied.stocks_pct, 4), allocation.reason)
         self.log.write("cost", **self.costs.snapshot())
         return applied
 
     async def allocator_loop(self, interval_seconds: float = 86400.0) -> None:
-        log.info("allocator loop: daily")
+        log.info("allocator loop: daily (stocks-only)")
         while True:
             try:
                 await self.run_allocation()
@@ -528,7 +396,6 @@ class TradingDesk:
         )
         log.info("outcome memory: %d closed trades loaded", self.refresh_memory())
         await asyncio.gather(
-            self.crypto_loop(),
             self.stock_loop(),
             self.exit_loop(),
             self.allocator_loop(),
@@ -536,7 +403,7 @@ class TradingDesk:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Grok Trading Desk")
+    parser = argparse.ArgumentParser(description="Grok Trading Desk (equity / Options Paper)")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--dry-run", action="store_true", help="decide and log, never execute")
     parser.add_argument(

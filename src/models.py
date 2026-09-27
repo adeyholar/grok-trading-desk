@@ -1,4 +1,4 @@
-"""Pydantic models shared by both markets."""
+"""Pydantic models for the equity desk."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ def _utcnow() -> datetime:
 
 
 class Market(str, Enum):
-    CRYPTO = "crypto"
     STOCKS = "stocks"
 
 
@@ -23,76 +22,6 @@ class ExitAction(str, Enum):
     TIGHTEN = "TIGHTEN"
     TRIM = "TRIM"
     CLOSE = "CLOSE"
-
-
-class Token(BaseModel):
-    """A pump.fun launch.
-
-    Fields split into two groups. The first is what a `subscribeNewToken` event
-    actually carries; the second is what the watch window measures afterwards.
-    Only the first is populated at creation time.
-    """
-
-    mint: str
-    symbol: str = ""
-    name: str = ""
-    creator: str = ""
-    liquidity_usd: float = 0.0
-    market_cap_usd: float = 0.0
-    holders: int = 0
-    top10_holder_pct: float = 0.0
-    dev_holding_pct: float = 0.0
-    age_seconds: float = 0.0
-    buys: int = 0
-    sells: int = 0
-    # Tri-state on purpose. The create event carries neither, and `False` would
-    # be indistinguishable from "not checked" - which is what made the old
-    # require_mint_revoked filter reject every real token.
-    mint_revoked: bool | None = None
-    lp_burned: bool | None = None
-    socials: dict[str, str] = Field(default_factory=dict)
-
-    # -- straight off the create event (denominated in SOL) --
-    curve_sol: float = 0.0            # vSolInBondingCurve
-    curve_tokens: float = 0.0         # vTokensInBondingCurve
-    market_cap_sol: float = 0.0
-    dev_initial_buy_sol: float = 0.0  # the deployer's own opening buy
-    uri: str = ""
-    pool: str = ""
-
-    # -- accumulated during the watch window --
-    unique_traders: int = 0
-    observed_seconds: float = 0.0
-    volume_sol: float = 0.0
-    price_change_pct: float = 0.0
-    dev_sold: bool = False
-
-    raw: dict[str, Any] = Field(default_factory=dict)
-    seen_at: datetime = Field(default_factory=_utcnow)
-
-    @property
-    def buy_sell_ratio(self) -> float:
-        if self.sells <= 0:
-            return float(self.buys) if self.buys else 0.0
-        return self.buys / self.sells
-
-    @property
-    def trades(self) -> int:
-        return self.buys + self.sells
-
-    def priced(self, sol_usd: float) -> "Token":
-        """Return a copy with the SOL-denominated fields converted to USD.
-
-        The feed speaks SOL; every threshold in the config speaks USD.
-        """
-        if sol_usd <= 0:
-            return self
-        return self.model_copy(
-            update={
-                "liquidity_usd": self.curve_sol * sol_usd,
-                "market_cap_usd": self.market_cap_sol * sol_usd,
-            }
-        )
 
 
 class Stock(BaseModel):
@@ -123,9 +52,9 @@ class Stock(BaseModel):
 
 
 class Position(BaseModel):
-    """An open position on either market."""
+    """An open equity position."""
 
-    market: Market
+    market: Market = Market.STOCKS
     symbol: str
     quantity: float
     entry_price: float
@@ -159,32 +88,28 @@ class Position(BaseModel):
 
 
 class Allocation(BaseModel):
-    """Budget split between the two markets."""
+    """Budget assignment. Stocks-only desk: always 100% equities."""
 
-    crypto_pct: float = 0.5
-    stocks_pct: float = 0.5
+    stocks_pct: float = 1.0
     reason: str = ""
     decided_at: datetime = Field(default_factory=_utcnow)
 
-    def normalized(self, crypto_max_pct: float = 1.0, stock_max_pct: float = 1.0) -> "Allocation":
-        """Clamp to the configured ceilings, then renormalize to sum to 1."""
-        crypto = max(0.0, min(self.crypto_pct, crypto_max_pct))
-        stocks = max(0.0, min(self.stocks_pct, stock_max_pct))
-        total = crypto + stocks
-        if total <= 0:
-            crypto, stocks, total = 0.5, 0.5, 1.0
+    def normalized(self, stock_max_pct: float = 1.0) -> "Allocation":
+        """Clamp stocks share; this fork is equity-only so result is always 1.0."""
+        stocks = max(0.0, min(float(self.stocks_pct), stock_max_pct))
+        if stocks <= 0:
+            stocks = 1.0
         return Allocation(
-            crypto_pct=crypto / total,
-            stocks_pct=stocks / total,
+            stocks_pct=1.0,  # equity-only desk
             reason=self.reason,
             decided_at=self.decided_at,
         )
 
 
 class Pulse(BaseModel):
-    """Regime read for one market."""
+    """Regime read for equities."""
 
-    market: Market
+    market: Market = Market.STOCKS
     regime: str = "unknown"
     go_signal: float = 0.0
     risk_appetite: float = 0.5
@@ -195,7 +120,7 @@ class Pulse(BaseModel):
 class Decision(BaseModel):
     """Final verdict on one candidate, ready to log."""
 
-    market: Market
+    market: Market = Market.STOCKS
     symbol: str
     score: float = 0.0
     buy: bool = False

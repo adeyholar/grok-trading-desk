@@ -74,10 +74,8 @@ class EventLog:
     def action(self, symbol: str, action: str, reason: str, **extra: Any) -> dict[str, Any]:
         return self.write("action", symbol=symbol, action=action, reason=reason, **extra)
 
-    def allocation(self, crypto_pct: float, stocks_pct: float, reason: str) -> dict[str, Any]:
-        return self.write(
-            "allocation", crypto_pct=crypto_pct, stocks_pct=stocks_pct, reason=reason
-        )
+    def allocation(self, stocks_pct: float, reason: str) -> dict[str, Any]:
+        return self.write("allocation", stocks_pct=stocks_pct, reason=reason)
 
     # -- reading back ----------------------------------------------------------------
 

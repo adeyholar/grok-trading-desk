@@ -10,8 +10,8 @@ full per-agent breakdown, and the eventual PnL — and then never read any of it
 back. Every decision was made from a cold start. This module closes that loop.
 
 Deliberately not a vector store. Matching is on the axes that actually recur in
-this log: the market, the symbol, the sector, and the theme the narrative bot
-assigned. That is cheap, explainable, and needs no extra dependency.
+this log: the market, the symbol, and the sector. That is cheap, explainable,
+and needs no extra dependency.
 """
 
 from __future__ import annotations
